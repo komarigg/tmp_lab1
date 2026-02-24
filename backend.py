@@ -47,7 +47,6 @@ class PrsRec:
 
 
 class PSApp:
-    """Backend: работа с .prd/.prs строго по структурам задания, без CLI."""
 
     def __init__(self) -> None:
         self.prd_path: Optional[str] = None
@@ -62,7 +61,6 @@ class PSApp:
         self.prs_free = PRS_HDR_SIZE
         self.prs_name = ""
 
-    # ---------- sizes ----------
     def prd_rec_size(self) -> int:
         return 1 + 4 + 4 + self.data_len
 
@@ -70,7 +68,6 @@ class PSApp:
     def prs_rec_size() -> int:
         return 1 + 4 + 2 + 4
 
-    # ---------- open/close ----------
     def opened(self) -> bool:
         return self.prd is not None and self.prs is not None
 
@@ -99,7 +96,7 @@ class PSApp:
             return f.read(2) == PRD_SIG
 
     def create(self, base_name: str, maxlen: int) -> None:
-        """Создать новые файлы base_name.prd/.prs (перезапись на совести GUI)."""
+        "Создать новые файлы prd/prs"
         if maxlen < 4:
             raise ValueError("maxLen должен быть >= 4.")
 
@@ -144,7 +141,6 @@ class PSApp:
         self.prs_path = prs_path
         self._prs_hdr_read()
 
-    # ---------- headers ----------
     def _prd_hdr_write(self) -> None:
         assert self.prd is not None
         self.prd.seek(0)
@@ -179,7 +175,6 @@ class PSApp:
         self.prs_head = struct.unpack(I32, self.prs.read(4))[0]
         self.prs_free = struct.unpack(I32, self.prs.read(4))[0]
 
-    # ---------- record IO ----------
     def _prd_read(self, off: int) -> PrdRec:
         assert self.prd is not None
         self.prd.seek(off)
@@ -225,7 +220,6 @@ class PSApp:
         self.prs.write(struct.pack(I16, r.qty))
         self.prs.write(struct.pack(I32, r.next_))
 
-    # ---------- scans ----------
     def scan_prd_physical(self) -> Iterable[PrdRec]:
         self.require_open()
         size = self.prd_rec_size()
@@ -255,7 +249,6 @@ class PSApp:
                 yield r
             ptr = r.next_
 
-    # ---------- find ----------
     def find_any(self, name: str) -> Optional[PrdRec]:
         name = norm(name)
         for r in self.scan_prd_physical():
@@ -270,7 +263,6 @@ class PSApp:
                 return r
         return None
 
-    # ---------- logical insert/rebuild ----------
     def _insert_sorted(self, new_off: int) -> None:
         new = self._prd_read(new_off)
         key = new.name.lower()
@@ -557,7 +549,6 @@ class PSApp:
 
         stack.remove(node.off)
 
-    # ---------- truncate ----------
     def truncate(self) -> None:
         self.require_open()
         assert self.prd_path and self.prs_path and self.prd and self.prs
@@ -728,50 +719,50 @@ def run_console() -> None:
             parts = cmd.split()
             command = parts[0].lower()
 
-            if command == "справка":
+            if command == "Справка":
                 print(help_text)
 
-            elif command == "выход":
+            elif command == "Выход":
                 app.close()
                 break
 
-            elif command == "создать":
+            elif command == "Создать":
                 app.create(parts[1], int(parts[2]))
                 print("Файлы созданы.")
 
-            elif command == "открыть":
+            elif command == "Открыть":
                 app.open(parts[1])
                 print("Файлы открыты.")
 
-            elif command == "добавить":
+            elif command == "Добавить":
                 app.add_component(parts[1], parts[2].upper())
                 print("Компонент добавлен.")
 
-            elif command == "удалить":
+            elif command == "Удалить":
                 app.delete_component(parts[1])
                 print("Компонент удалён (логически).")
 
-            elif command == "восстановить":
+            elif command == "Восстановить":
                 app.restore_one(parts[1])
                 print("Компонент восстановлен.")
 
-            elif command == "восстановитьвсе":
+            elif command == "Восстановить все":
                 app.restore_all()
                 print("Все компоненты восстановлены.")
 
-            elif command == "добавитьсвязь":
+            elif command == "Добавить связь":
                 qty = int(parts[3]) if len(parts) > 3 else 1
                 app.add_spec(parts[1], parts[2], qty)
                 print("Связь добавлена.")
 
-            elif command == "удалитьсвязь":
+            elif command == "Удалить связь":
                 app.delete_spec(parts[1], parts[2])
                 print("Связь удалена (логически).")
 
             elif command == "печать":
                 print(app.build_tree_text(parts[1]))
 
-            elif command == "уплотнить":
+            elif command == "Уплотнить":
                 app.truncate()
                 print("Файлы уплотнены.")
 

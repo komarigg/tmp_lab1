@@ -47,6 +47,7 @@ class PrsRec:
 
 
 class PSApp:
+    """Backend: работа с .prd/.prs строго по структурам задания, без CLI."""
 
     def __init__(self) -> None:
         self.prd_path: Optional[str] = None
@@ -61,6 +62,7 @@ class PSApp:
         self.prs_free = PRS_HDR_SIZE
         self.prs_name = ""
 
+    # ---------- sizes ----------
     def prd_rec_size(self) -> int:
         return 1 + 4 + 4 + self.data_len
 
@@ -68,12 +70,13 @@ class PSApp:
     def prs_rec_size() -> int:
         return 1 + 4 + 2 + 4
 
+    # ---------- open/close ----------
     def opened(self) -> bool:
         return self.prd is not None and self.prs is not None
 
     def require_open(self) -> None:
         if not self.opened():
-            raise RuntimeError("Сначала выполните «Создать» или «Открыть».")
+            raise RuntimeError("Сначала Create или Open.")
 
     def close(self) -> None:
         for f in (self.prd, self.prs):
@@ -96,7 +99,7 @@ class PSApp:
             return f.read(2) == PRD_SIG
 
     def create(self, base_name: str, maxlen: int) -> None:
-        "Создать новые файлы prd/prs"
+        """Создать новые файлы base_name.prd/.prs (перезапись на совести GUI)."""
         if maxlen < 4:
             raise ValueError("maxLen должен быть >= 4.")
 
@@ -124,7 +127,7 @@ class PSApp:
         """Открыть base_name.prd и связанный .prs из заголовка."""
         prd_path = base_name + ".prd"
         if not os.path.exists(prd_path):
-            raise FileNotFoundError("Файл PRD не найден.")
+            raise FileNotFoundError("PRD не найден.")
         if not self.valid_sig(prd_path):
             raise RuntimeError("Неверная сигнатура PRD.")
 
@@ -136,11 +139,12 @@ class PSApp:
 
         prs_path = os.path.join(os.path.dirname(prd_path) or ".", self.prs_name)
         if not os.path.exists(prs_path):
-            raise FileNotFoundError("Связанный файл PRS не найден.")
+            raise FileNotFoundError("Связанный PRS не найден.")
         self.prs = open(prs_path, "rb+")
         self.prs_path = prs_path
         self._prs_hdr_read()
 
+    # ---------- headers ----------
     def _prd_hdr_write(self) -> None:
         assert self.prd is not None
         self.prd.seek(0)
@@ -160,7 +164,10 @@ class PSApp:
         self.prd_head = struct.unpack(I32, self.prd.read(4))[0]
         self.prd_free = struct.unpack(I32, self.prd.read(4))[0]
         self.prs_name = (
-            self.prd.read(16).split(b"\x00", 1)[0].decode("ascii", "ignore").strip()
+            self.prd.read(16)
+            .split(b"\x00", 1)[0]
+            .decode("ascii", "ignore")
+            .strip()
         )
 
     def _prs_hdr_write(self) -> None:
@@ -175,6 +182,7 @@ class PSApp:
         self.prs_head = struct.unpack(I32, self.prs.read(4))[0]
         self.prs_free = struct.unpack(I32, self.prs.read(4))[0]
 
+    # ---------- record IO ----------
     def _prd_read(self, off: int) -> PrdRec:
         assert self.prd is not None
         self.prd.seek(off)
@@ -220,6 +228,7 @@ class PSApp:
         self.prs.write(struct.pack(I16, r.qty))
         self.prs.write(struct.pack(I32, r.next_))
 
+    # ---------- scans ----------
     def scan_prd_physical(self) -> Iterable[PrdRec]:
         self.require_open()
         size = self.prd_rec_size()
@@ -242,13 +251,14 @@ class PSApp:
         seen = set()
         while ptr != -1:
             if ptr in seen:
-                raise RuntimeError("Обнаружен цикл в логическом списке PRD.")
+                raise RuntimeError("Цикл в логическом списке PRD.")
             seen.add(ptr)
             r = self._prd_read(ptr)
             if r.del_ == 0:
                 yield r
             ptr = r.next_
 
+    # ---------- find ----------
     def find_any(self, name: str) -> Optional[PrdRec]:
         name = norm(name)
         for r in self.scan_prd_physical():
@@ -263,6 +273,7 @@ class PSApp:
                 return r
         return None
 
+    # ---------- logical insert/rebuild ----------
     def _insert_sorted(self, new_off: int) -> None:
         new = self._prd_read(new_off)
         key = new.name.lower()
@@ -307,6 +318,7 @@ class PSApp:
 
     # ---------- public API for GUI ----------
     def get_components(self) -> List[Tuple[str, str]]:
+        """Список (name, type_letter) в порядке логического списка."""
         return [(r.name, r.typ) for r in self.iter_prd_logical()]
 
     def add_component(self, name: str, typ: str) -> None:
@@ -315,7 +327,7 @@ class PSApp:
         if not name:
             raise ValueError("Пустое имя.")
         if self.find_any(name) is not None:
-            raise ValueError("Компонент с таким именем уже существует.")
+            raise ValueError("Дублирование имени компонента.")
 
         rec = PrdRec(self.prd_free, 0, -1, -1, typ, name)
         self._prd_write(rec)
@@ -338,7 +350,7 @@ class PSApp:
                 sr = self._prs_read(ptr)
                 if sr.del_ == 0 and sr.comp_off == comp.off:
                     raise ValueError(
-                        "Нельзя удалить: на компонент есть ссылки в спецификациях других компонентов."
+                        "На компонент есть ссылки в спецификациях других компонентов."
                     )
                 ptr = sr.next_
 
@@ -384,11 +396,13 @@ class PSApp:
 
     # ---------- cycle protection helpers ----------
     def _would_create_cycle(self, parent_off: int, child_off: int) -> bool:
+        """True if adding parent->child creates a cycle."""
         if parent_off == child_off:
             return True
         return self._has_path(start_off=child_off, target_off=parent_off)
 
     def _has_path(self, start_off: int, target_off: int) -> bool:
+        """DFS: is there a path start -> ... -> target through specifications?"""
         stack = [start_off]
         visited = set()
 
@@ -415,24 +429,25 @@ class PSApp:
 
     # ---------------- SPECIFICATION (PRS) ----------------
     def add_spec(self, a: str, b: str, qty: int = 1) -> None:
+        """Add link A/B with quantity. If A/B exists -> increase qty. Forbid cycles."""
         self.require_open()
         a = norm(a)
         b = norm(b)
 
         parent = self.find_active(a)
         if parent is None:
-            raise ValueError("Компонент A не найден.")
+            raise ValueError("A component not found.")
         if parent.typ == "D":
-            raise ValueError("Нельзя задавать спецификацию для детали.")
+            raise ValueError("Specification is not allowed for Detail.")
 
         child = self.find_active(b)
         if child is None:
-            raise ValueError("Компонент B не найден.")
+            raise ValueError("B component not found.")
         if qty < 1:
-            raise ValueError("Количество должно быть >= 1.")
+            raise ValueError("qty must be >= 1.")
 
         if self._would_create_cycle(parent.off, child.off):
-            raise ValueError("Обнаружен цикл: такая связь создаёт замкнутую зависимость.")
+            raise ValueError("Cycle detected: this link would create a loop.")
 
         ptr = parent.first_spec
         while ptr != -1:
@@ -464,19 +479,20 @@ class PSApp:
         self._prs_hdr_write()
 
     def delete_spec(self, a: str, b: str) -> None:
+        """Logical delete link A/B."""
         self.require_open()
         a = norm(a)
         b = norm(b)
 
         parent = self.find_active(a)
         if parent is None:
-            raise ValueError("Компонент A не найден.")
+            raise ValueError("A component not found.")
         if parent.typ == "D":
-            raise ValueError("У детали нет спецификации.")
+            raise ValueError("Specification is not allowed for Detail.")
 
         child = self.find_active(b)
         if child is None:
-            raise ValueError("Компонент B не найден.")
+            raise ValueError("B component not found.")
 
         ptr = parent.first_spec
         while ptr != -1:
@@ -487,17 +503,18 @@ class PSApp:
                 return
             ptr = sr.next_
 
-        raise ValueError("Связь A/B не найдена.")
+        raise ValueError("A/B link not found.")
 
     def get_spec(self, a: str) -> List[Tuple[str, str, int]]:
+        """Return specification list for component A: [(B_name, B_type, qty), ...]."""
         self.require_open()
         a = norm(a)
 
         parent = self.find_active(a)
         if parent is None:
-            raise ValueError("Компонент не найден.")
+            raise ValueError("Component not found.")
         if parent.typ == "D":
-            raise ValueError("У детали нет спецификации.")
+            raise ValueError("Specification is not allowed for Detail.")
 
         result: List[Tuple[str, str, int]] = []
         ptr = parent.first_spec
@@ -513,12 +530,13 @@ class PSApp:
         return result
 
     def build_tree_text(self, name: str) -> str:
+        """Text tree for GUI (like Print(name))."""
         self.require_open()
         root = self.find_active(name)
         if root is None:
-            raise ValueError("Компонент не найден.")
+            raise ValueError("Component not found.")
         if root.typ == "D":
-            raise ValueError("Нельзя строить дерево для детали.")
+            raise ValueError("Tree is not allowed for Detail.")
 
         out: List[str] = [root.name]
         self._tree_dfs(root, prefix="", stack=set(), out=out)
@@ -526,7 +544,7 @@ class PSApp:
 
     def _tree_dfs(self, node: PrdRec, prefix: str, stack: set, out: List[str]) -> None:
         if node.off in stack:
-            out.append(prefix + "└─ [обнаружен цикл]")
+            out.append(prefix + "└─ [cycle detected]")
             return
         stack.add(node.off)
 
@@ -549,7 +567,9 @@ class PSApp:
 
         stack.remove(node.off)
 
+    # ---------- truncate ----------
     def truncate(self) -> None:
+        """Физически уплотнить файлы (удалить del=-1)."""
         self.require_open()
         assert self.prd_path and self.prs_path and self.prd and self.prs
 
@@ -668,47 +688,24 @@ def run_console() -> None:
     app = PSApp()
 
     help_text = """
-Доступные команды:
+Available commands:
 
-Создать <имя> <maxLen>
-    Создать новые файлы PRD/PRS
-
-Открыть <имя>
-    Открыть существующие файлы PRD/PRS
-
-Добавить <имя> <тип>
-    Добавить компонент (тип: I — изделие, U — узел, D — деталь)
-
-Удалить <имя>
-    Логически удалить компонент
-
-Восстановить <имя>
-    Восстановить один компонент
-
-ВосстановитьВсе
-    Восстановить все компоненты
-
-ДобавитьСвязь <A> <B> [количество]
-    Добавить связь A/B (в спецификацию)
-
-УдалитьСвязь <A> <B>
-    Удалить связь A/B
-
-Печать <имя>
-    Вывести дерево изделия
-
-Уплотнить
-    Физически удалить помеченные записи (truncate)
-
-Справка
-    Показать список команд
-
-Выход
-    Завершить программу
+Create <name> <maxLen>      — создать новые файлы
+Open <name>                 — открыть существующие файлы
+Add <name> <type>           — добавить компонент (I, U, D)
+Delete <name>               — логически удалить компонент
+Restore <name>              — восстановить компонент
+RestoreAll                  — восстановить все компоненты
+SpecAdd <A> <B> [qty]       — добавить связь A/B
+SpecDel <A> <B>             — удалить связь A/B
+Print <name>                — вывести дерево изделия
+Truncate                    — физически удалить помеченные записи
+Help                        — показать список команд
+Exit                        — выход из программы
 """
 
     print("Задание 1 — консольный режим")
-    print("Введите «Справка» для просмотра команд.")
+    print('Введите "Help" для просмотра команд.')
 
     while True:
         try:
@@ -719,55 +716,55 @@ def run_console() -> None:
             parts = cmd.split()
             command = parts[0].lower()
 
-            if command == "Справка":
+            if command == "help":
                 print(help_text)
 
-            elif command == "Выход":
+            elif command == "exit":
                 app.close()
                 break
 
-            elif command == "Создать":
+            elif command == "create":
                 app.create(parts[1], int(parts[2]))
-                print("Файлы созданы.")
+                print("Database created.")
 
-            elif command == "Открыть":
+            elif command == "open":
                 app.open(parts[1])
-                print("Файлы открыты.")
+                print("Database opened.")
 
-            elif command == "Добавить":
+            elif command == "add":
                 app.add_component(parts[1], parts[2].upper())
-                print("Компонент добавлен.")
+                print("Component added.")
 
-            elif command == "Удалить":
+            elif command == "delete":
                 app.delete_component(parts[1])
-                print("Компонент удалён (логически).")
+                print("Component marked as deleted.")
 
-            elif command == "Восстановить":
+            elif command == "restore":
                 app.restore_one(parts[1])
-                print("Компонент восстановлен.")
+                print("Component restored.")
 
-            elif command == "Восстановить все":
+            elif command == "restoreall":
                 app.restore_all()
-                print("Все компоненты восстановлены.")
+                print("All components restored.")
 
-            elif command == "Добавить связь":
+            elif command == "specadd":
                 qty = int(parts[3]) if len(parts) > 3 else 1
                 app.add_spec(parts[1], parts[2], qty)
-                print("Связь добавлена.")
+                print("Specification added.")
 
-            elif command == "Удалить связь":
+            elif command == "specdel":
                 app.delete_spec(parts[1], parts[2])
-                print("Связь удалена (логически).")
+                print("Specification deleted.")
 
-            elif command == "печать":
+            elif command == "print":
                 print(app.build_tree_text(parts[1]))
 
-            elif command == "Уплотнить":
+            elif command == "truncate":
                 app.truncate()
-                print("Файлы уплотнены.")
+                print("Files truncated.")
 
             else:
-                print("Неизвестная команда. Введите «Справка».")
+                print('Unknown command. Type "Help".')
 
         except Exception as e:
-            print("Ошибка:", e)
+            print("Error:", e)

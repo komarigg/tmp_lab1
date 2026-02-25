@@ -62,7 +62,6 @@ class PSApp:
         self.prs_free = PRS_HDR_SIZE
         self.prs_name = ""
 
-    # ---------- sizes ----------
     def prd_rec_size(self) -> int:
         return 1 + 4 + 4 + self.data_len
 
@@ -70,7 +69,6 @@ class PSApp:
     def prs_rec_size() -> int:
         return 1 + 4 + 2 + 4
 
-    # ---------- open/close ----------
     def opened(self) -> bool:
         return self.prd is not None and self.prs is not None
 
@@ -144,7 +142,6 @@ class PSApp:
         self.prs_path = prs_path
         self._prs_hdr_read()
 
-    # ---------- headers ----------
     def _prd_hdr_write(self) -> None:
         assert self.prd is not None
         self.prd.seek(0)
@@ -182,7 +179,6 @@ class PSApp:
         self.prs_head = struct.unpack(I32, self.prs.read(4))[0]
         self.prs_free = struct.unpack(I32, self.prs.read(4))[0]
 
-    # ---------- record IO ----------
     def _prd_read(self, off: int) -> PrdRec:
         assert self.prd is not None
         self.prd.seek(off)
@@ -228,7 +224,6 @@ class PSApp:
         self.prs.write(struct.pack(I16, r.qty))
         self.prs.write(struct.pack(I32, r.next_))
 
-    # ---------- scans ----------
     def scan_prd_physical(self) -> Iterable[PrdRec]:
         self.require_open()
         size = self.prd_rec_size()
@@ -258,7 +253,6 @@ class PSApp:
                 yield r
             ptr = r.next_
 
-    # ---------- find ----------
     def find_any(self, name: str) -> Optional[PrdRec]:
         name = norm(name)
         for r in self.scan_prd_physical():
@@ -273,7 +267,6 @@ class PSApp:
                 return r
         return None
 
-    # ---------- logical insert/rebuild ----------
     def _insert_sorted(self, new_off: int) -> None:
         new = self._prd_read(new_off)
         key = new.name.lower()
@@ -316,7 +309,6 @@ class PSApp:
         self.prd_head = -1 if not active else active[0].off
         self._prd_hdr_write()
 
-    # ---------- public API for GUI ----------
     def get_components(self) -> List[Tuple[str, str]]:
         """Список (name, type_letter) в порядке логического списка."""
         return [(r.name, r.typ) for r in self.iter_prd_logical()]
@@ -394,15 +386,12 @@ class PSApp:
                 self._prs_write(s)
         self.rebuild_alphabetical()
 
-    # ---------- cycle protection helpers ----------
     def _would_create_cycle(self, parent_off: int, child_off: int) -> bool:
-        """True if adding parent->child creates a cycle."""
         if parent_off == child_off:
             return True
         return self._has_path(start_off=child_off, target_off=parent_off)
 
     def _has_path(self, start_off: int, target_off: int) -> bool:
-        """DFS: is there a path start -> ... -> target through specifications?"""
         stack = [start_off]
         visited = set()
 
@@ -427,7 +416,6 @@ class PSApp:
 
         return False
 
-    # ---------------- SPECIFICATION (PRS) ----------------
     def add_spec(self, a: str, b: str, qty: int = 1) -> None:
         """Add link A/B with quantity. If A/B exists -> increase qty. Forbid cycles."""
         self.require_open()
@@ -479,7 +467,6 @@ class PSApp:
         self._prs_hdr_write()
 
     def delete_spec(self, a: str, b: str) -> None:
-        """Logical delete link A/B."""
         self.require_open()
         a = norm(a)
         b = norm(b)
@@ -506,7 +493,6 @@ class PSApp:
         raise ValueError("A/B link not found.")
 
     def get_spec(self, a: str) -> List[Tuple[str, str, int]]:
-        """Return specification list for component A: [(B_name, B_type, qty), ...]."""
         self.require_open()
         a = norm(a)
 
@@ -530,7 +516,6 @@ class PSApp:
         return result
 
     def build_tree_text(self, name: str) -> str:
-        """Text tree for GUI (like Print(name))."""
         self.require_open()
         root = self.find_active(name)
         if root is None:
@@ -567,9 +552,7 @@ class PSApp:
 
         stack.remove(node.off)
 
-    # ---------- truncate ----------
     def truncate(self) -> None:
-        """Физически уплотнить файлы (удалить del=-1)."""
         self.require_open()
         assert self.prd_path and self.prs_path and self.prd and self.prs
 
@@ -618,7 +601,6 @@ class PSApp:
             prs_new.write(struct.pack(I32, prs_head))
             prs_new.write(struct.pack(I32, prs_free))
 
-            # PRD
             w = PRD_HDR_SIZE
             for i, old in enumerate(active):
                 next_ = -1 if i == len(active) - 1 else w + self.prd_rec_size()
@@ -639,7 +621,6 @@ class PSApp:
             prd_new.seek(2 + 2 + 4)
             prd_new.write(struct.pack(I32, prd_free))
 
-            # PRS
             w_prs = PRS_HDR_SIZE
             first_prs: Optional[int] = None
 
